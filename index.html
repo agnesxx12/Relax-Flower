@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>4-7-8 花朵呼吸 AR</title>
+  <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { overflow: hidden; }
+    a-scene { width: 100vw; height: 100vh; }
+
+    /* ── UI 疊層 ── */
+    #ui {
+      position: fixed; inset: 0;
+      pointer-events: none;
+      z-index: 100;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    #scan-hint {
+      position: absolute;
+      top: 32px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.45);
+      color: white; font-size: 14px;
+      padding: 8px 18px; border-radius: 20px;
+      white-space: nowrap;
+      backdrop-filter: blur(6px);
+    }
+
+    #circle-wrap {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    #breath-circle {
+      width: 110px; height: 110px;
+      border-radius: 50%;
+      border: 2.5px solid rgba(255,255,255,0.4);
+      background: rgba(255,255,255,0.07);
+      display: flex; align-items: center; justify-content: center;
+      transition: transform 0.6s ease, border-color 0.5s, box-shadow 0.5s;
+      backdrop-filter: blur(4px);
+    }
+
+    #breath-countdown {
+      color: white; font-size: 34px; font-weight: 200;
+      text-shadow: 0 0 12px rgba(255,255,255,0.7);
+    }
+
+    #phase-label {
+      position: absolute;
+      bottom: 140px; left: 50%;
+      transform: translateX(-50%);
+      color: white; font-size: 17px; font-weight: 300;
+      text-align: center; white-space: nowrap;
+      background: rgba(0,0,0,0.35);
+      padding: 7px 18px; border-radius: 20px;
+      backdrop-filter: blur(6px);
+      transition: color 0.4s;
+    }
+
+    #progress-wrap {
+      position: absolute;
+      bottom: 95px; left: 50%;
+      transform: translateX(-50%);
+      width: 190px; display: none; text-align: center;
+    }
+
+    #progress-label { color: rgba(255,255,255,0.65); font-size: 12px; margin-bottom: 5px; }
+
+    #progress-track {
+      height: 4px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 2px; overflow: hidden;
+    }
+
+    #progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(to right, #FFB3D9, #FF1493);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    #start-btn {
+      position: absolute;
+      bottom: 40px; left: 50%;
+      transform: translateX(-50%);
+      pointer-events: all;
+      background: rgba(255,255,255,0.12);
+      border: 1.5px solid rgba(255,255,255,0.35);
+      color: white; font-size: 16px; letter-spacing: 0.5px;
+      padding: 12px 28px; border-radius: 30px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      display: none;
+      transition: background 0.2s;
+    }
+    #start-btn:hover { background: rgba(255,255,255,0.22); }
+
+    #complete-msg {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center; color: white; display: none;
+    }
+    #complete-msg h2 {
+      font-size: 22px; font-weight: 300;
+      text-shadow: 0 0 25px rgba(255,105,180,0.9);
+    }
+  </style>
+</head>
+
+<!-- 貼在 </body> 前 -->
+<div id="debug" style="
+  position:fixed; top:10px; right:10px;
+  background:rgba(0,0,0,0.65); color:#0f0;
+  font-size:12px; padding:6px 12px;
+  border-radius:8px; z-index:999;
+  font-family:monospace; white-space:pre;
+  pointer-events:none;
+"></div>
+
+<body>
+
+<!-- ════════════════════════════════════════
+     A-Frame AR 場景
+════════════════════════════════════════ -->
+<a-scene
+  mindar-image="imageTargetSrc: ./targets.mind;"
+  color-space="sRGB"
+  embedded
+  renderer="colorManagement: true"
+  vr-mode-ui="enabled: false"
+  device-orientation-permission-ui="enabled: false"
+>
+  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+  <!-- Image Target：花瓶底座 -->
+  <a-entity id="flower-anchor" mindar-image-target="targetIndex: 0">
+
+    <!-- 莖：scale Y 從 0 → 1 模擬生長 -->
+    <a-cylinder id="stem"
+      position="0 0.05 0"
+      radius="0.007" height="0.10"
+      color="#5D9B4E" material="roughness: 0.8"
+      scale="1 0 1"
+    ></a-cylinder>
+
+    <!-- 葉片 -->
+    <a-entity id="leaf-group" scale="0 0 0">
+      <a-cone position="0.055 0.04 0" rotation="0 0 -55"
+        radius-bottom="0.02" radius-top="0" height="0.05"
+        color="#4CAF50"></a-cone>
+      <a-cone position="-0.05 0.03 0" rotation="0 0 55"
+        radius-bottom="0.018" radius-top="0" height="0.046"
+        color="#66BB6A"></a-cone>
+    </a-entity>
+
+    <!-- 花朵群組（5片花瓣 + 花蕊）-->
+    <!-- 每片花瓣的父 entity 繞 Y 軸旋轉 72°，
+         子 sphere 偏移在 X 方向，形成放射狀排列 -->
+    <a-entity id="flower-group" position="0 0.12 0" scale="0 0 0">
+      <a-entity rotation="0 0 0">
+        <a-sphere position="0.038 0 0" radius="0.022"
+          color="#FF85C2" scale="1.6 0.6 0.7"></a-sphere>
+      </a-entity>
+      <a-entity rotation="0 72 0">
+        <a-sphere position="0.038 0 0" radius="0.022"
+          color="#FF69B4" scale="1.6 0.6 0.7"></a-sphere>
+      </a-entity>
+      <a-entity rotation="0 144 0">
+        <a-sphere position="0.038 0 0" radius="0.022"
+          color="#FF85C2" scale="1.6 0.6 0.7"></a-sphere>
+      </a-entity>
+      <a-entity rotation="0 216 0">
+        <a-sphere position="0.038 0 0" radius="0.022"
+          color="#FF69B4" scale="1.6 0.6 0.7"></a-sphere>
+      </a-entity>
+      <a-entity rotation="0 288 0">
+        <a-sphere position="0.038 0 0" radius="0.022"
+          color="#FF85C2" scale="1.6 0.6 0.7"></a-sphere>
+      </a-entity>
+      <!-- 花蕊 -->
+      <a-sphere position="0 0.005 0" radius="0.018" color="#FFD700"
+        material="roughness: 0.4; metalness: 0.2"></a-sphere>
+    </a-entity>
+
+  </a-entity>
+</a-scene>
+
+
+<!-- ════════════════════════════════════════
+     UI 疊層
+════════════════════════════════════════ -->
+<div id="ui">
+  <div id="scan-hint">📱 將鏡頭對準花瓶底座圖案</div>
+
+  <div id="circle-wrap">
+    <div id="breath-circle">
+      <span id="breath-countdown">—</span>
+    </div>
+  </div>
+
+  <div id="phase-label">偵測花瓶中...</div>
+
+  <div id="progress-wrap">
+    <div id="progress-label">🌸 花朵開放程度</div>
+    <div id="progress-track">
+      <div id="progress-fill"></div>
+    </div>
+  </div>
+
+  <button id="start-btn">▶ 開始呼吸練習</button>
+
+  <div id="complete-msg">
+    <h2>🌸 花已完全綻放</h2>
+    <p style="font-size:13px; margin-top:8px; opacity:0.65;">呼吸練習完成 · 做得很好</p>
+  </div>
+</div>
+
+
+<script>
+  // ════════════════════════════════════════
+  // 全域狀態
+  // ════════════════════════════════════════
+  let bloomProgress  = 0;      // 0 ~ 1，花朵開放程度
+  let isExhalePhase  = false;  // 目前是否處於呼氣階段
+  let isTargetFound  = false;  // Image Target 是否被偵測到
+  let isStarted      = false;  // 使用者是否已按下開始
+  let audioAnalyser  = null;
+  let audioDataArray = null;
+
+  // 調整參數（可依實際測試環境修改）
+  const BLOW_THRESHOLD = 14;     // 麥克風音量觸發閾值（0~255）
+  const BLOOM_RATE     = 0.0008; // 每幀累積量；約需 3~4 輪完整呼吸才能全開
+
+
+  // ════════════════════════════════════════
+  // 4-7-8 呼吸狀態機
+  // ════════════════════════════════════════
+  const Breathing = {
+    phase: 'IDLE',
+    startTime: 0,
+    durations: { INHALE: 4000, HOLD: 7000, EXHALE: 8000 },
+
+    start() {
+      this.phase     = 'INHALE';
+      this.startTime = Date.now();
+      this._render();
+    },
+
+    tick() {
+      if (this.phase === 'IDLE') return;
+
+      const elapsed   = Date.now() - this.startTime;
+      const duration  = this.durations[this.phase];
+      const remaining = Math.max(0, Math.ceil((duration - elapsed) / 1000));
+
+      // 更新倒數數字
+      document.getElementById('breath-countdown').textContent = remaining;
+
+      // 通知主循環目前是否為呼氣階段
+      isExhalePhase = (this.phase === 'EXHALE');
+
+      // 階段切換
+      if (elapsed >= duration) {
+        this.startTime = Date.now();
+        this.phase     = { INHALE: 'HOLD', HOLD: 'EXHALE', EXHALE: 'INHALE' }[this.phase];
+        this._render();
+      }
+    },
+
+    _render() {
+      const cfg = {
+        INHALE: { text: '🌬️ 吸氣 · 4 秒',           color: '#4FC3F7', circleScale: 1.45 },
+        HOLD:   { text: '⏸️ 憋氣 · 7 秒',           color: '#CE93D8', circleScale: 1.45 },
+        EXHALE: { text: '🌸 呼氣 · 8 秒 — 讓花開放', color: '#F48FB1', circleScale: 0.82 }
+      }[this.phase];
+
+      document.getElementById('phase-label').textContent = cfg.text;
+
+      const circle          = document.getElementById('breath-circle');
+      circle.style.borderColor = cfg.color;
+      circle.style.boxShadow   = `0 0 20px ${cfg.color}55`;
+      circle.style.transform   = `scale(${cfg.circleScale})`;
+    }
+  };
+
+
+  // ════════════════════════════════════════
+  // 麥克風初始化
+  // ════════════════════════════════════════
+  async function initMic() {
+    try {
+      const stream      = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const ctx         = new (window.AudioContext || window.webkitAudioContext)();
+      const src         = ctx.createMediaStreamSource(stream);
+      audioAnalyser     = ctx.createAnalyser();
+      audioAnalyser.fftSize = 256;
+      audioDataArray    = new Uint8Array(audioAnalyser.frequencyBinCount);
+      src.connect(audioAnalyser);
+    } catch (e) {
+      // 麥克風失敗時進入「計時模式」：呼氣階段自動累積（不需吹氣）
+      console.warn('麥克風存取失敗，切換為計時模式：', e);
+    }
+  }
+
+  function getMicVol() {
+    if (!audioAnalyser) return BLOW_THRESHOLD + 1; // 計時模式：回傳高於閾值
+    audioAnalyser.getByteFrequencyData(audioDataArray);
+    let sum = 0;
+    for (const v of audioDataArray) sum += v;
+    return sum / audioDataArray.length;
+  }
+
+
+  // ════════════════════════════════════════
+  // 花朵動畫（根據 bloomProgress 更新 3D 物件）
+  // ════════════════════════════════════════
+  function updateFlower(p) {
+    // 莖：前 50% 先長莖
+    const stemY = Math.min(p * 2, 1);
+    document.querySelector('#stem')
+      .setAttribute('scale', `1 ${stemY} 1`);
+
+    // 葉片：40%~70% 逐漸出現
+    const leafP = Math.min(Math.max((p - 0.4) / 0.3, 0), 1);
+    document.querySelector('#leaf-group')
+      .setAttribute('scale', `${leafP} ${leafP} ${leafP}`);
+
+    // 花朵：60%~100% 逐漸盛開
+    const flwP = Math.min(Math.max((p - 0.6) / 0.4, 0), 1);
+    document.querySelector('#flower-group')
+      .setAttribute('scale', `${flwP} ${flwP} ${flwP}`);
+
+    // 進度條
+    document.getElementById('progress-fill').style.width = `${p * 100}%`;
+
+    if (p >= 1) onBloomComplete();
+  }
+
+  function onBloomComplete() {
+    Breathing.phase = 'IDLE';
+    isExhalePhase   = false;
+    document.getElementById('circle-wrap').style.display  = 'none';
+    document.getElementById('phase-label').style.display  = 'none';
+    document.getElementById('complete-msg').style.display = 'block';
+  }
+
+
+  // ════════════════════════════════════════
+  // 主循環（每幀執行）
+  // ════════════════════════════════════════
+  function loop() {
+    requestAnimationFrame(loop);
+
+ // ── Debug ──────────────────────────────
+  const dbgVol = audioAnalyser ? getMicVol().toFixed(1) : '無麥克風';
+  document.getElementById('debug').textContent =
+    `音量: ${dbgVol}  閾值: ${BLOW_THRESHOLD}\n` +
+    `階段: ${Breathing.phase}  進度: ${(bloomProgress*100).toFixed(0)}%\n` +
+    `已開始: ${isStarted}  偵測到: ${isTargetFound}`;
+  // ──────────────────────────────────────
+
+  if (!isStarted || !isTargetFound || bloomProgress >= 1) return;
+  // ... 以下不變
+}
+    // 尚未開始或花瓶未偵測到或已完全開放，跳過
+    if (!isStarted || !isTargetFound || bloomProgress >= 1) return;
+
+    // 驅動呼吸狀態機
+    Breathing.tick();
+
+    // 判斷是否正在呼氣且有吹氣動作
+    const isBlowing = isExhalePhase && (getMicVol() > BLOW_THRESHOLD);
+    if (isBlowing) {
+      bloomProgress = Math.min(bloomProgress + BLOOM_RATE, 1);
+      updateFlower(bloomProgress);
+    }
+  }
+
+
+  // ════════════════════════════════════════
+  // MindAR Image Target 事件監聽
+  // ════════════════════════════════════════
+  document.querySelector('a-scene').addEventListener('loaded', () => {
+    const anchor = document.getElementById('flower-anchor');
+
+    // 花瓶底座被偵測到
+    anchor.addEventListener('targetFound', () => {
+      isTargetFound = true;
+      document.getElementById('scan-hint').textContent = '✅ 花瓶已偵測到';
+      setTimeout(() => {
+        document.getElementById('scan-hint').style.display = 'none';
+      }, 2500);
+
+      if (!isStarted) {
+        document.getElementById('start-btn').style.display    = 'block';
+        document.getElementById('phase-label').textContent    = '點擊「開始」進行呼吸練習';
+      }
+    });
+
+    // 花瓶底座離開鏡頭
+    anchor.addEventListener('targetLost', () => {
+      isTargetFound = false;
+      const hint = document.getElementById('scan-hint');
+      hint.style.display = 'block';
+      hint.textContent   = '📱 請重新對準花瓶底座';
+    });
+  });
+
+
+  // ════════════════════════════════════════
+  // 開始按鈕
+  // ════════════════════════════════════════
+  document.getElementById('start-btn').addEventListener('click', async function () {
+    this.textContent         = '初始化麥克風...';
+    this.style.pointerEvents = 'none';
+
+    await initMic();  // 申請麥克風權限
+
+    isStarted = true;
+    this.style.display                                      = 'none';
+    document.getElementById('progress-wrap').style.display = 'block';
+    Breathing.start();
+  });
+
+
+  // 啟動主循環
+  loop();
+</script>
+
+</body>
+</html>
